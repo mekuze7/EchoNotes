@@ -37,9 +37,9 @@ class GeminiAiClient(private val context: Context? = null) {
 
     private val apiService: GeminiApiService
     private val fileUploadClient = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(0, TimeUnit.MILLISECONDS)
+        .connectTimeout(5, TimeUnit.MINUTES)
+        .readTimeout(15, TimeUnit.MINUTES)
+        .writeTimeout(15, TimeUnit.MINUTES)
         .build()
     @Volatile
     private var cachedAvailableModels: List<GeminiModelInfo>? = null
@@ -878,6 +878,16 @@ class GeminiAiClient(private val context: Context? = null) {
                 Base64.encodeToString(audioFile.readBytes(), Base64.NO_WRAP)
             }
 
+            val systemInstructionContent = GeminiContent(
+                parts = listOf(
+                    GeminiPart(
+                        text = "You are an expert Amharic and multilingual audio transcription engine. " +
+                            "CRITICAL: Always write Amharic spoken words in authentic Ethiopic / Fidel script (አማርኛ). " +
+                            "Never transliterate Amharic words into English or Latin characters."
+                    )
+                )
+            )
+
             val request = GeminiRequest(
                 contents = listOf(
                     GeminiContent(
@@ -895,6 +905,7 @@ class GeminiAiClient(private val context: Context? = null) {
                         role = "user"
                     )
                 ),
+                systemInstruction = systemInstructionContent,
                 generationConfig = GeminiGenerationConfig(temperature = 0.1f)
             )
 
@@ -925,6 +936,16 @@ class GeminiAiClient(private val context: Context? = null) {
     ): String {
         val uploadedFile = uploadAudioFile(audioFile, mimeType, apiKey)
         try {
+            val systemInstructionContent = GeminiContent(
+                parts = listOf(
+                    GeminiPart(
+                        text = "You are an expert Amharic and multilingual audio transcription engine. " +
+                            "CRITICAL: Always write Amharic spoken words in authentic Ethiopic / Fidel script (አማርኛ). " +
+                            "Never transliterate Amharic words into English or Latin characters."
+                    )
+                )
+            )
+
             val request = GeminiRequest(
                 contents = listOf(
                     GeminiContent(
@@ -942,6 +963,7 @@ class GeminiAiClient(private val context: Context? = null) {
                         role = "user"
                     )
                 ),
+                systemInstruction = systemInstructionContent,
                 generationConfig = GeminiGenerationConfig(temperature = 0.1f)
             )
             val response = executeAudioWithModelFallback(apiKey, request)
@@ -1278,10 +1300,11 @@ class GeminiAiClient(private val context: Context? = null) {
         private const val MAX_API_ERROR_MESSAGE_CHARS = 400
         private const val AUDIO_TRANSCRIPTION_INSTRUCTIONS =
             "Perform speaker diarization and transcribe every clearly audible spoken word in the audio or video recording. " +
+                "CRITICAL LANGUAGE RULE FOR AMHARIC: You MUST transcribe all spoken Amharic using authentic Ethiopic (Fidel / Ge'ez) script characters (e.g. ሰላም፣ ጤና ይስጥልኝ፣ እንዴት ናችሁ). " +
+                "NEVER write Amharic spoken words using English or Latin letters (Latinization/Transliteration is strictly prohibited). " +
+                "If words are spoken in English, write them in English script. If words are spoken in Amharic, write them in Ethiopic Fidel script. " +
                 "When 2 or more people speak in a meeting, interview, or conversation, identify and label each distinct speaker at the start of their spoken turn (e.g., 'Speaker 1:', 'Speaker 2:', 'Speaker 3:'). " +
                 "Group consecutive spoken sentences under their speaker label, starting a new line whenever the speaker changes. " +
-                "Automatically detect and follow language changes throughout the recording. If speakers switch between languages (such as Amharic and English), " +
-                "preserve code-switching and write each word in its spoken language's original script (including Amharic in Ethiopic/Ge'ez script). " +
                 "Do not translate or guess words masked by heavy noise. Return the full speaker-diarized transcript."
 
         val PREFERRED_MODELS = listOf(

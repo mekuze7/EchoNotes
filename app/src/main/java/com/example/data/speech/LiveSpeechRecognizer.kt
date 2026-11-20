@@ -186,10 +186,10 @@ class LiveSpeechRecognizer(private val context: Context) {
                             ?.firstOrNull()
                             ?.let(::appendRecognizedText)
 
-                        // Continue listening for next spoken sentence
+                        // Continue listening immediately for next spoken sentence
                         if (isListening && !isIntentionallyStopped) {
                             scope.launch {
-                                kotlinx.coroutines.delay(200)
+                                kotlinx.coroutines.delay(20)
                                 if (isListening && !isIntentionallyStopped) {
                                     restartNativeListening()
                                 }
@@ -252,6 +252,11 @@ class LiveSpeechRecognizer(private val context: Context) {
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra("android.speech.extra.DICTATION_MODE", true)
+                // Low-latency latency optimizations
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 100L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 400L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 300L)
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     putExtra(
                         RecognizerIntent.EXTRA_ENABLE_FORMATTING,
@@ -259,20 +264,26 @@ class LiveSpeechRecognizer(private val context: Context) {
                     )
                     putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true)
                 }
-                if (requestedLanguage != "auto") {
-                    putExtra(
-                        RecognizerIntent.EXTRA_LANGUAGE,
-                        when (requestedLanguage) {
-                            "am" -> "am-ET"
-                            "en" -> "en-US"
-                            else -> Locale.getDefault().toLanguageTag()
+
+                when (requestedLanguage) {
+                    "am" -> {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "am-ET")
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "am-ET")
+                        putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("am-ET", "en-US"))
+                    }
+                    "en" -> {
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
+                    }
+                    else -> {
+                        // "auto" mode: prefer Amharic and English multi-language recognition
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "am-ET")
+                        putExtra("android.speech.extra.EXTRA_ADDITIONAL_LANGUAGES", arrayOf("am-ET", "en-US", Locale.getDefault().toLanguageTag()))
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            putExtra(EXTRA_ENABLE_LANGUAGE_DETECTION, true)
+                            putExtra(EXTRA_ENABLE_LANGUAGE_SWITCH, LANGUAGE_SWITCH_BALANCED)
                         }
-                    )
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    putExtra(EXTRA_ENABLE_LANGUAGE_DETECTION, true)
-                    putExtra(EXTRA_ENABLE_LANGUAGE_SWITCH, LANGUAGE_SWITCH_BALANCED)
-                } else {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+                    }
                 }
                 putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
             }

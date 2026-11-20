@@ -422,7 +422,7 @@ object BackgroundTranscriptionManager {
         _activeTasks.value = current
     }
 
-    private val NETWORK_RETRY_DELAYS_MS = longArrayOf(2_000, 5_000, 10_000)
+    private val NETWORK_RETRY_DELAYS_MS = longArrayOf(2_000, 4_000, 8_000, 12_000, 20_000)
     private const val TRANSLATION_CHUNK_CHARS = 2_500
 
     private fun initNotificationChannel(context: Context) {

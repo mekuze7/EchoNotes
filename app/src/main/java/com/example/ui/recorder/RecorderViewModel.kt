@@ -402,11 +402,12 @@ class RecorderViewModel(
                 }
 
                 val audioFile = uploadedFile ?: throw IllegalStateException("The selected audio file could not be saved.")
+                val fileMb = (audioFile.length() / (1024 * 1024)).coerceAtLeast(1)
                 _uiState.value = _uiState.value.copy(
-                    statusMessage = if (audioFile.length() > 8L * 1024L * 1024L) {
-                        "Uploading large audio to Gemini for transcription..."
+                    statusMessage = if (audioFile.length() > 20L * 1024L * 1024L) {
+                        "Uploading & processing $fileMb MB audio file with Gemini AI..."
                     } else {
-                        "Transcribing uploaded audio..."
+                        "Transcribing audio file ($fileMb MB)..."
                     }
                 )
                 val transcript = aiRepository.transcribeAudioFallback(audioFile.absolutePath).trim()
@@ -585,7 +586,7 @@ class RecorderViewModel(
         val requestVersion = partialTranslationVersion.incrementAndGet()
         partialTranslationJob?.cancel()
         partialTranslationJob = viewModelScope.launch {
-            delay(250)
+            delay(100)
             if (requestVersion != partialTranslationVersion.get()) return@launch
             try {
                 val translated = aiRepository.translateText(transcript, state.translationLanguage)
