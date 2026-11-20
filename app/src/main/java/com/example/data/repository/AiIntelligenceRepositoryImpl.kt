@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import com.example.data.ai.GeminiAiClient
 import com.example.domain.model.AiAnalysisResult
+import com.example.domain.model.SpeechTranscriptionResult
 import com.example.domain.repository.AiIntelligenceRepository
 import java.io.File
 
@@ -9,8 +10,12 @@ class AiIntelligenceRepositoryImpl(
     val geminiClient: GeminiAiClient = GeminiAiClient()
 ) : AiIntelligenceRepository {
 
-    override suspend fun generateAnalysis(transcript: String, noteTitle: String): AiAnalysisResult {
-        return geminiClient.generateAnalysis(transcript, noteTitle)
+    override suspend fun generateAnalysis(
+        transcript: String,
+        noteTitle: String,
+        category: String?
+    ): AiAnalysisResult {
+        return geminiClient.generateAnalysis(transcript, noteTitle, category)
     }
 
     override suspend fun answerQuestion(
@@ -25,6 +30,24 @@ class AiIntelligenceRepositoryImpl(
     override suspend fun transcribeAudioFallback(audioFilePath: String): String {
         val file = File(audioFilePath)
         return geminiClient.transcribeAudioFallback(file)
+    }
+
+    override suspend fun transcribeAudioChunk(
+        audioFilePath: String,
+        preferredLanguage: String,
+        startMs: Long,
+        endMs: Long
+    ): SpeechTranscriptionResult {
+        return geminiClient.transcribeAudioChunk(
+            audioFile = File(audioFilePath),
+            preferredLanguage = preferredLanguage,
+            startMs = startMs,
+            endMs = endMs
+        )
+    }
+
+    override suspend fun translateText(text: String, targetLanguage: String): String {
+        return geminiClient.translateText(text, targetLanguage)
     }
 
     override suspend fun testConnection(testKey: String?): Result<String> {

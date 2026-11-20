@@ -2,6 +2,9 @@ package com.example.data.audio
 
 import android.content.Context
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -22,6 +25,10 @@ class AudioRecorderManager(private val context: Context) {
     private var isPaused = false
     private var amplitudeJob: Job? = null
 
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var automaticGainControl: AutomaticGainControl? = null
+    private var echoCanceler: AcousticEchoCanceler? = null
+
     private val _amplitudeFlow = MutableStateFlow(0f)
     val amplitudeFlow: StateFlow<Float> = _amplitudeFlow.asStateFlow()
 
@@ -32,6 +39,7 @@ class AudioRecorderManager(private val context: Context) {
             stopRecording() // Clean up any existing instance
             prepareOutputFile(outputFile)
             recorder = createMediaRecorder(outputFile)
+            enableHardwareAudioEffects()
             isSimulatedAudio = false
         } catch (recorderEx: Throwable) {
             Log.w("AudioRecorderManager", "Hardware mic unavailable (${recorderEx.message}). Operating in resilient virtual audio capture mode.")
@@ -60,7 +68,14 @@ class AudioRecorderManager(private val context: Context) {
         }
 
         return mediaRecorder.apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
+            // VOICE_RECOGNITION configures hardware DSP beamforming for far-field/remote voice detection and noise filtering
+            try {
+                setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+            } catch (_: Exception) {
+                Log.w("AudioRecorderManager", "VOICE_RECOGNITION audio source unavailable, falling back to MIC")
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+            }
+
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
             setAudioEncodingBitRate(128000)
@@ -71,7 +86,53 @@ class AudioRecorderManager(private val context: Context) {
         }
     }
 
+    private fun enableHardwareAudioEffects() {
+        try {
+            // Session 0 applies audio effects to default microphone capture stream
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(0)?.apply {
+                    enabled = true
+                }
+                Log.i("AudioRecorderManager", "Hardware NoiseSuppressor active for background noise avoidance.")
+            }
+            if (AutomaticGainControl.isAvailable()) {
+                automaticGainControl = AutomaticGainControl.create(0)?.apply {
+                    enabled = true
+                }
+                Log.i("AudioRecorderManager", "Hardware AutomaticGainControl active for remote voice gain boost.")
+            }
+            if (AcousticEchoCanceler.isAvailable()) {
+                echoCanceler = AcousticEchoCanceler.create(0)?.apply {
+                    enabled = true
+                }
+            }
+        } catch (e: Throwable) {
+            Log.w("AudioRecorderManager", "Hardware audio FX initialization skipped: ${e.message}")
+        }
+    }
+
+    private fun cleanupAudioEffects() {
+        try {
+            noiseSuppressor?.enabled = false
+            noiseSuppressor?.release()
+        } catch (_: Exception) {}
+        noiseSuppressor = null
+
+        try {
+            automaticGainControl?.enabled = false
+            automaticGainControl?.release()
+        } catch (_: Exception) {}
+        automaticGainControl = null
+
+        try {
+            echoCanceler?.enabled = false
+            echoCanceler?.release()
+        } catch (_: Exception) {}
+        echoCanceler = null
+    }
+
     private fun cleanupRecorderAndSetSimulated() {
+        cleanupAudioEffects()
         recorder?.release()
         recorder = null
         isSimulatedAudio = true
@@ -149,6 +210,7 @@ class AudioRecorderManager(private val context: Context) {
         amplitudeJob?.cancel()
         amplitudeJob = null
         _amplitudeFlow.value = 0f
+        cleanupAudioEffects()
 
         if (isRecording) {
             try {

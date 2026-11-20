@@ -1,5 +1,12 @@
 package com.example.ui.chat
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.speech.RecognizerIntent
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +30,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -61,11 +70,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,6 +95,7 @@ import com.example.ui.theme.StitchSurfaceVariant
 import com.example.ui.theme.StitchTextMuted
 import com.example.ui.theme.StitchTextPrimary
 import com.example.ui.theme.StitchTextSecondary
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +106,26 @@ fun ChatWithNoteScreen(
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     var showApiKeyDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val voiceInputLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spokenText = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (spokenText.isNotBlank()) {
+                val currentText = uiState.inputText.trim()
+                viewModel.onInputTextChanged(
+                    listOf(currentText, spokenText).filter { it.isNotBlank() }.joinToString(" ")
+                )
+            } else {
+                Toast.makeText(context, "No speech was recognized. Try again.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     if (showApiKeyDialog) {
         ApiKeySettingsDialog(
@@ -103,7 +135,8 @@ fun ChatWithNoteScreen(
 
     LaunchedEffect(uiState.messages.size, uiState.isSending) {
         if (uiState.messages.isNotEmpty()) {
-            listState.animateScrollToItem(uiState.messages.size)
+            val lastItemIndex = uiState.messages.size - 1 + if (uiState.isSending) 1 else 0
+            listState.animateScrollToItem(lastItemIndex)
         }
     }
 
@@ -184,10 +217,13 @@ fun ChatWithNoteScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Grounded in: ${uiState.note?.title?.take(18) ?: "what is an LLM"}... 2:38 min",
+                            text = uiState.note?.let { "Grounded in: ${it.title} · ${it.formattedDuration}" }
+                                ?: "Loading note...",
                             fontSize = 11.sp,
                             color = StitchTextSecondary,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -214,6 +250,23 @@ fun ChatWithNoteScreen(
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+            }
+
+            uiState.errorMessage?.let { errorMessage ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer
+                ) {
+                    Text(
+                        text = errorMessage,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
                 }
             }
 
@@ -349,12 +402,38 @@ fun ChatWithNoteScreen(
                         )
                     },
                     leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Voice Input",
-                            tint = StitchTextSecondary,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        IconButton(
+                            onClick = {
+                                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                    putExtra(
+                                        RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                        RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                                    )
+                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+                                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your question")
+                                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                                }
+                                try {
+                                    voiceInputLauncher.launch(intent)
+                                } catch (_: ActivityNotFoundException) {
+                                    Toast.makeText(
+                                        context,
+                                        "Speech recognition is not available on this device.",
+                                        Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("chat_voice_input_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Start voice input",
+                                tint = StitchTextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     },
                     trailingIcon = {
                         Icon(
@@ -364,6 +443,10 @@ fun ChatWithNoteScreen(
                             modifier = Modifier.size(20.dp)
                         )
                     },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = { viewModel.sendMessage() }
+                    ),
                     modifier = Modifier
                         .weight(1f)
                         .testTag("chat_input_field"),
@@ -376,7 +459,7 @@ fun ChatWithNoteScreen(
                         focusedTextColor = StitchTextPrimary,
                         unfocusedTextColor = StitchTextPrimary
                     ),
-                    maxLines = 3,
+                    maxLines = 1,
                     singleLine = true
                 )
 

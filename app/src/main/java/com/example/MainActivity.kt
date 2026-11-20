@@ -37,6 +37,8 @@ import com.example.ui.settings.SettingsScreen
 import com.example.ui.splash.SplashScreen
 import com.example.ui.theme.EchoNotesTheme
 import com.example.ui.theme.ThemeManager
+import com.example.ui.tasks.TasksScreen
+import com.example.ui.tasks.TasksViewModel
 import com.example.ui.trash.TrashScreen
 import com.example.ui.trash.TrashViewModel
 
@@ -134,14 +136,15 @@ fun EchoNotesApp(
 
         // 1. Dashboard Screen (Google Stitch Ultra-Dark / Clean Light Design)
         composable(Screen.Dashboard.route) {
-            val viewModel = remember { DashboardViewModel(navController.context, noteRepository) }
+            val viewModel = remember { DashboardViewModel(navController.context, noteRepository, aiRepository) }
             DashboardScreen(
                 viewModel = viewModel,
                 onNavigateToRecord = { navController.navigate(Screen.Recorder.route) },
                 onNavigateToDetail = { noteId ->
                     navController.navigate(Screen.NoteDetail.createRoute(noteId))
                 },
-                onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                onNavigateToTasks = { navController.navigate(Screen.Tasks.route) }
             )
         }
 
@@ -244,6 +247,15 @@ fun EchoNotesApp(
                 viewModel = viewModel,
                 onNavigateBack = { navController.popBackStack() },
                 onNavigateToDetail = { id -> navController.navigate(Screen.NoteDetail.createRoute(id)) }
+            )
+        }
+
+        composable(Screen.Tasks.route) {
+            val viewModel = remember { TasksViewModel(noteRepository) }
+            TasksScreen(
+                viewModel = viewModel,
+                onNavigateBack = { navController.popBackStack() },
+                onNavigateToNote = { id -> navController.navigate(Screen.NoteDetail.createRoute(id)) }
             )
         }
     }

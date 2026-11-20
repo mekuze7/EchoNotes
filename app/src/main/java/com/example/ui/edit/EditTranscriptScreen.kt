@@ -153,6 +153,22 @@ fun EditTranscriptScreen(
                     )
                 )
 
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Changing the full transcript clears timed caption alignment. To keep timings, edit captions from the note detail screen.",
+                    color = StitchTextMuted,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+                uiState.errorMessage?.let { message ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // Bottom Buttons: Cancel and Save Changes

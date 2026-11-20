@@ -2,6 +2,7 @@ package com.example.data.speech
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -24,11 +25,17 @@ class LiveSpeechRecognizer(private val context: Context) {
 
     companion object {
         private const val TAG = "LiveSpeechRecognizer"
+        private const val EXTRA_ENABLE_LANGUAGE_DETECTION =
+            "android.speech.extra.ENABLE_LANGUAGE_DETECTION"
+        private const val EXTRA_ENABLE_LANGUAGE_SWITCH =
+            "android.speech.extra.ENABLE_LANGUAGE_SWITCH"
+        private const val LANGUAGE_SWITCH_BALANCED = "balanced"
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
     private var isIntentionallyStopped = false
+    private var requestedLanguage = "auto"
     private val scope = CoroutineScope(Dispatchers.Main)
 
     private val accumulatedTextBuilder = StringBuilder()
@@ -59,24 +66,49 @@ class LiveSpeechRecognizer(private val context: Context) {
         }
     }
 
-    fun startListening(category: String = "Meetings") {
+    fun startListening(language: String = "auto") {
         stopListening()
+        requestedLanguage = language
         accumulatedTextBuilder.clear()
         _liveTranscript.value = ""
         _partialTranscript.value = ""
+        startListeningWithoutReset()
+    }
+
+    fun pauseListening() {
+        isIntentionallyStopped = true
+        isListening = false
+        _partialTranscript.value = ""
+        try {
+            speechRecognizer?.stopListening()
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error pausing speech recognizer: ${e.message}")
+        } finally {
+            speechRecognizer = null
+        }
+    }
+
+    fun resumeListening() {
+        if (isListening) return
+        _partialTranscript.value = ""
+        startListeningWithoutReset()
+    }
+
+    private fun startListeningWithoutReset() {
         _hasError.value = false
         _statusMessage.value = null
         isIntentionallyStopped = false
         isListening = true
 
         val speechAvailable = isRecognitionAvailable()
-        if (speechAvailable) {
-            initNativeRecognizer()
-        } else {
-            Log.w(TAG, "Speech recognition not reported as available by system. Attempting native binding fallback...")
-            _statusMessage.value = "Speech recognition service not detected. If using an Android Studio emulator, ensure an image with Google APIs is running."
-            initNativeRecognizer()
+        if (!speechAvailable) {
+            _hasError.value = true
+            _statusMessage.value = "Live speech recognition is unavailable. Enable a speech recognition service in Android settings."
+            return
         }
+        initNativeRecognizer()
     }
 
     private fun initNativeRecognizer() {
@@ -87,6 +119,8 @@ class LiveSpeechRecognizer(private val context: Context) {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
                         Log.d(TAG, "onReadyForSpeech")
+                        _hasError.value = false
+                        _statusMessage.value = "Listening... Speak to see live transcription."
                     }
 
                     override fun onBeginningOfSpeech() {
@@ -118,6 +152,7 @@ class LiveSpeechRecognizer(private val context: Context) {
 
                         if (errorDescription != null && error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
                             _statusMessage.value = errorDescription
+                            _hasError.value = true
                         }
 
                         if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
@@ -147,20 +182,9 @@ class LiveSpeechRecognizer(private val context: Context) {
                     }
 
                     override fun onResults(results: Bundle?) {
-                        val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        if (!matches.isNullOrEmpty()) {
-                            val chunk = matches[0].trim()
-                            if (chunk.isNotEmpty()) {
-                                synchronized(accumulatedTextBuilder) {
-                                    if (accumulatedTextBuilder.isNotEmpty()) {
-                                        accumulatedTextBuilder.append(" ")
-                                    }
-                                    accumulatedTextBuilder.append(chunk)
-                                }
-                                _liveTranscript.value = accumulatedTextBuilder.toString()
-                                _partialTranscript.value = ""
-                            }
-                        }
+                        results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()
+                            ?.let(::appendRecognizedText)
 
                         // Continue listening for next spoken sentence
                         if (isListening && !isIntentionallyStopped) {
@@ -173,13 +197,38 @@ class LiveSpeechRecognizer(private val context: Context) {
                         }
                     }
 
+                    override fun onSegmentResults(segmentResults: Bundle) {
+                        segmentResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()
+                            ?.let(::appendRecognizedText)
+                    }
+
                     override fun onPartialResults(partialResults: Bundle?) {
                         val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (!matches.isNullOrEmpty()) {
                             val interim = matches[0].trim()
                             if (interim.isNotEmpty()) {
-                                _partialTranscript.value = interim
+                                val committed = synchronized(accumulatedTextBuilder) {
+                                    accumulatedTextBuilder.toString().trim()
+                                }
+                                _partialTranscript.value = if (
+                                    committed.isNotEmpty() &&
+                                    interim.startsWith(committed, ignoreCase = true)
+                                ) {
+                                    interim.drop(committed.length).trim()
+                                } else {
+                                    interim
+                                }
                             }
+                        }
+                    }
+
+                    override fun onLanguageDetection(results: Bundle) {
+                        val languageTag = results.getString("android.speech.extra.DETECTED_LANGUAGE")
+                        if (!languageTag.isNullOrBlank()) {
+                            val language = Locale.forLanguageTag(languageTag)
+                                .getDisplayLanguage(Locale.getDefault())
+                            _statusMessage.value = "Detected language: $language"
                         }
                     }
 
@@ -200,10 +249,32 @@ class LiveSpeechRecognizer(private val context: Context) {
         try {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toString())
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 putExtra("android.speech.extra.DICTATION_MODE", true)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    putExtra(
+                        RecognizerIntent.EXTRA_ENABLE_FORMATTING,
+                        RecognizerIntent.FORMATTING_OPTIMIZE_LATENCY
+                    )
+                    putExtra(RecognizerIntent.EXTRA_HIDE_PARTIAL_TRAILING_PUNCTUATION, true)
+                }
+                if (requestedLanguage != "auto") {
+                    putExtra(
+                        RecognizerIntent.EXTRA_LANGUAGE,
+                        when (requestedLanguage) {
+                            "am" -> "am-ET"
+                            "en" -> "en-US"
+                            else -> Locale.getDefault().toLanguageTag()
+                        }
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    putExtra(EXTRA_ENABLE_LANGUAGE_DETECTION, true)
+                    putExtra(EXTRA_ENABLE_LANGUAGE_SWITCH, LANGUAGE_SWITCH_BALANCED)
+                } else {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+                }
+                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
             }
             speechRecognizer?.startListening(intent)
         } catch (e: Throwable) {
@@ -212,8 +283,48 @@ class LiveSpeechRecognizer(private val context: Context) {
         }
     }
 
+    private fun appendRecognizedText(text: String) {
+        val chunk = text.trim()
+        if (chunk.isEmpty()) return
+
+        val transcript = synchronized(accumulatedTextBuilder) {
+            val committed = accumulatedTextBuilder.toString().trim()
+            when {
+                committed.isEmpty() -> accumulatedTextBuilder.append(chunk)
+                chunk.equals(committed, ignoreCase = true) ||
+                    committed.endsWith(" $chunk", ignoreCase = true) -> Unit
+                chunk.startsWith("$committed ", ignoreCase = true) -> {
+                    accumulatedTextBuilder.setLength(0)
+                    accumulatedTextBuilder.append(chunk)
+                }
+                else -> accumulatedTextBuilder.append(" ").append(chunk)
+            }
+            accumulatedTextBuilder.toString().trim()
+        }
+        _liveTranscript.value = transcript
+        _partialTranscript.value = ""
+    }
+
 
     fun onAudioAmplitudeReceived(amplitude: Float) {}
+
+    fun removeRecognizedPhrase(phrase: String): String {
+        val updatedTranscript = synchronized(accumulatedTextBuilder) {
+            val index = accumulatedTextBuilder.lastIndexOf(phrase, ignoreCase = true)
+            if (index >= 0) {
+                accumulatedTextBuilder.delete(index, index + phrase.length)
+                val normalized = accumulatedTextBuilder.toString()
+                    .replace(Regex("\\s{2,}"), " ")
+                    .trim()
+                accumulatedTextBuilder.setLength(0)
+                accumulatedTextBuilder.append(normalized)
+            }
+            accumulatedTextBuilder.toString().trim()
+        }
+        _liveTranscript.value = updatedTranscript
+        _partialTranscript.value = ""
+        return updatedTranscript
+    }
 
     fun stopListening(): String {
         isIntentionallyStopped = true

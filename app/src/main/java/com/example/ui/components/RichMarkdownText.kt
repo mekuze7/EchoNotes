@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -109,10 +110,22 @@ fun parseMarkdownInline(
 private sealed class MarkdownBlock {
     data class Header(val level: Int, val text: String) : MarkdownBlock()
     data class Paragraph(val text: String) : MarkdownBlock()
+    data class SpeakerTurn(val speakerLabel: String, val speechText: String) : MarkdownBlock()
     data class BulletItem(val text: String) : MarkdownBlock()
     data class NumberedItem(val number: String, val text: String) : MarkdownBlock()
     data class CodeBlock(val code: String, val language: String = "") : MarkdownBlock()
     data class Blockquote(val text: String) : MarkdownBlock()
+}
+
+private fun getSpeakerBadgeColor(speakerLabel: String): Color {
+    val lower = speakerLabel.lowercase(java.util.Locale.ROOT)
+    return when {
+        lower.contains("1") || lower.contains("a") || lower.contains("interviewer") -> StitchPurpleText
+        lower.contains("2") || lower.contains("b") -> StitchCyan
+        lower.contains("3") || lower.contains("c") -> Color(0xFFF59E0B) // Amber
+        lower.contains("4") || lower.contains("d") -> Color(0xFF10B981) // Emerald Green
+        else -> StitchPurpleText
+    }
 }
 
 /**
@@ -148,6 +161,15 @@ private fun parseMarkdownBlocks(rawText: String): List<MarkdownBlock> {
         }
 
         if (trimmed.isBlank()) {
+            continue
+        }
+
+        // Speaker turn (e.g., "Speaker 1:", "Speaker 2:", "Interviewer:")
+        val speakerMatch = Regex("^(Speaker\\s*\\d+|Interviewer|Participant\\s*[A-Z]|Person\\s*\\d+|[A-Z][a-zA-Z0-9_]*):\\s*(.*)", RegexOption.IGNORE_CASE).find(trimmed)
+        if (speakerMatch != null && speakerMatch.groupValues[1].length <= 25) {
+            val label = speakerMatch.groupValues[1].trim()
+            val speech = speakerMatch.groupValues[2].trim()
+            blocks.add(MarkdownBlock.SpeakerTurn(label, speech))
             continue
         }
 
@@ -234,6 +256,39 @@ fun RichMarkdownText(
                         color = color,
                         lineHeight = lineHeight
                     )
+                }
+
+                is MarkdownBlock.SpeakerTurn -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        val badgeColor = getSpeakerBadgeColor(block.speakerLabel)
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = badgeColor.copy(alpha = 0.15f)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = "🗣️ ${block.speakerLabel}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeColor
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = parseMarkdownInline(block.speechText, color),
+                            fontSize = fontSize,
+                            color = color,
+                            lineHeight = lineHeight
+                        )
+                    }
                 }
 
                 is MarkdownBlock.BulletItem -> {

@@ -1,6 +1,7 @@
 package com.example.ui.detail
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,14 +20,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
@@ -34,17 +39,20 @@ import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CheckCircleOutline
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.IosShare
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.MoreVert
 import com.example.ui.settings.ApiKeySettingsDialog
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Refresh
@@ -58,12 +66,18 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import com.example.data.local.files.NoteExporter
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -87,6 +101,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.ActionItem
 import com.example.domain.model.Note
+import com.example.domain.model.SubtitleCue
 import com.example.ui.theme.StitchBackground
 import com.example.ui.theme.StitchCardOutline
 import com.example.ui.theme.StitchCyan
@@ -106,6 +121,111 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@Composable
+private fun SubtitleTrackCard(
+    cues: List<SubtitleCue>,
+    currentPositionMs: Long,
+    textSizeSp: Float,
+    position: String,
+    onSeek: (SubtitleCue) -> Unit,
+    onEditCue: (Int, SubtitleCue) -> Unit,
+    onTextSizeChange: (Float) -> Unit,
+    onTogglePosition: () -> Unit
+) {
+    val activeIndex = cues.indexOfFirst {
+        currentPositionMs >= it.startMs && currentPositionMs < it.endMs
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = StitchSurface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, StitchCardOutline)
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Timed subtitles", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = StitchTextPrimary)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { onTextSizeChange(textSizeSp - 2f) }) {
+                        Text("A-", color = StitchTextSecondary)
+                    }
+                    Text("${textSizeSp.toInt()}sp", fontSize = 11.sp, color = StitchTextMuted)
+                    TextButton(onClick = { onTextSizeChange(textSizeSp + 2f) }) {
+                        Text("A+", color = StitchTextSecondary)
+                    }
+                    TextButton(onClick = onTogglePosition) {
+                        Text(position.replaceFirstChar(Char::uppercase), color = StitchCyan)
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                cues.forEachIndexed { index, cue ->
+                    Column(
+                        modifier = Modifier
+                            .width(220.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (index == activeIndex) StitchPurpleContainer else Color.Transparent)
+                            .padding(6.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = cue.speakerLabel.ifBlank { "Unlabeled speaker" },
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = StitchCyan
+                            )
+                            IconButton(
+                                onClick = { onEditCue(index, cue) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Edit caption and speaker",
+                                    tint = StitchCyan,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = if (cue.translatedText.isBlank()) {
+                                cue.text
+                            } else {
+                                "${cue.text}\n${cue.translatedText}"
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSeek(cue) }
+                                .padding(vertical = 2.dp),
+                            fontSize = textSizeSp.sp,
+                            fontWeight = if (index == activeIndex) FontWeight.Bold else FontWeight.Medium,
+                            color = if (index == activeIndex) StitchPurpleText else StitchTextSecondary
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "Tap a caption to play from that moment. Edit to correct text or label the speaker.",
+                fontSize = 10.sp,
+                color = StitchTextMuted,
+                modifier = Modifier.padding(top = 5.dp)
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NoteDetailScreen(
@@ -119,6 +239,10 @@ fun NoteDetailScreen(
     var showDeleteConfirmation by remember { mutableStateOf(false) }
     var isTranscriptExpanded by remember { mutableStateOf(false) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
+    var showExportBottomSheet by remember { mutableStateOf(false) }
+    var editingCueIndex by remember { mutableStateOf<Int?>(null) }
+    var editingCueText by remember { mutableStateOf("") }
+    var editingCueSpeaker by remember { mutableStateOf("") }
 
     if (showApiKeyDialog) {
         ApiKeySettingsDialog(
@@ -185,17 +309,8 @@ fun NoteDetailScreen(
                         )
                     }
 
-                    IconButton(onClick = {
-                        note?.let {
-                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, it.title)
-                                putExtra(Intent.EXTRA_TEXT, "${it.title}\n\nExecutive Summary:\n${it.summary}\n\nTranscript:\n${it.transcript}")
-                            }
-                            context.startActivity(Intent.createChooser(shareIntent, "Share EchoNotes"))
-                        }
-                    }) {
-                        Icon(imageVector = Icons.Default.Share, contentDescription = "Share", tint = StitchTextSecondary)
+                    IconButton(onClick = { showExportBottomSheet = true }) {
+                        Icon(imageVector = Icons.Default.Share, contentDescription = "Export & Share", tint = StitchTextSecondary)
                     }
 
                     IconButton(onClick = { 
@@ -353,6 +468,25 @@ fun NoteDetailScreen(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
+                if (uiState.subtitlePosition == "top" && uiState.subtitleCues.isNotEmpty()) {
+                    SubtitleTrackCard(
+                        cues = uiState.subtitleCues,
+                        currentPositionMs = uiState.playerState.currentPositionMs,
+                        textSizeSp = uiState.subtitleTextSizeSp,
+                        position = uiState.subtitlePosition,
+                        onSeek = viewModel::playFromSubtitle,
+                        onEditCue = { index, cue ->
+                            editingCueIndex = index
+                            editingCueText = cue.text
+                            editingCueSpeaker = cue.speakerLabel
+                            viewModel.playFromSubtitle(cue)
+                        },
+                        onTextSizeChange = viewModel::setSubtitleTextSize,
+                        onTogglePosition = viewModel::toggleSubtitlePosition
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 // 1. Audio Player Card matching screen.png
                 StitchAudioPlayerCard(
                     playerState = uiState.playerState,
@@ -361,6 +495,25 @@ fun NoteDetailScreen(
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                if (uiState.subtitlePosition == "bottom" && uiState.subtitleCues.isNotEmpty()) {
+                    SubtitleTrackCard(
+                        cues = uiState.subtitleCues,
+                        currentPositionMs = uiState.playerState.currentPositionMs,
+                        textSizeSp = uiState.subtitleTextSizeSp,
+                        position = uiState.subtitlePosition,
+                        onSeek = viewModel::playFromSubtitle,
+                        onEditCue = { index, cue ->
+                            editingCueIndex = index
+                            editingCueText = cue.text
+                            editingCueSpeaker = cue.speakerLabel
+                            viewModel.playFromSubtitle(cue)
+                        },
+                        onTextSizeChange = viewModel::setSubtitleTextSize,
+                        onTogglePosition = viewModel::toggleSubtitlePosition
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 // 2. Transcript Snippet Card with Expand chevron
                 Card(
@@ -404,15 +557,46 @@ fun NoteDetailScreen(
                         val displayTranscript = if (isTranscriptExpanded) {
                             note.transcript.ifBlank { "No transcript text available." }
                         } else {
-                            (note.transcript.take(120) + if (note.transcript.length > 120) "..." else "").ifBlank { "Voice note transcript recorded." }
+                            note.transcript.take(120) +
+                                (if (note.transcript.length > 120) "..." else "")
                         }
 
                         Text(
-                            text = displayTranscript,
+                            text = displayTranscript.ifBlank { "No transcript text available." },
                             fontSize = 13.sp,
                             color = StitchTextSecondary,
                             lineHeight = 19.sp
                         )
+                    }
+                }
+
+                if (uiState.translatedTranscript.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = StitchSurface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StitchCardOutline)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(14.dp)
+                        ) {
+                            Text(
+                                text = "Translated transcript",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = StitchCyan
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = uiState.translatedTranscript,
+                                fontSize = 13.sp,
+                                color = StitchTextSecondary,
+                                lineHeight = 19.sp
+                            )
+                        }
                     }
                 }
 
@@ -430,8 +614,73 @@ fun NoteDetailScreen(
                 // 4. Key Takeaways Section matching screen.png (with points counter)
                 StitchKeyTakeawaysCard(takeaways = note.keyTakeaways)
 
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 5. Export & Share Note Card
+                ExportNoteCard(onOpenExport = { showExportBottomSheet = true })
+
+                uiState.transcriptEditError?.let { message ->
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(top = 8.dp),
+                        color = StitchRed,
+                        fontSize = 12.sp
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(28.dp))
             }
+        }
+
+        if (showExportBottomSheet && note != null) {
+            ExportBottomSheet(
+                note = note,
+                subtitleCues = uiState.subtitleCues,
+                onDismiss = { showExportBottomSheet = false },
+                onExportPdf = {
+                    val uri = NoteExporter.exportToPdf(context, note)
+                    NoteExporter.shareFile(context, uri, "application/pdf", "Share PDF Document")
+                    showExportBottomSheet = false
+                },
+                onExportMarkdown = {
+                    val uri = NoteExporter.exportToMarkdown(context, note)
+                    NoteExporter.shareFile(context, uri, "text/markdown", "Share Markdown File")
+                    showExportBottomSheet = false
+                },
+                onExportTxt = {
+                    val uri = NoteExporter.exportToTxt(context, note)
+                    NoteExporter.shareFile(context, uri, "text/plain", "Share Text File")
+                    showExportBottomSheet = false
+                },
+                onExportSrt = {
+                    val uri = NoteExporter.exportToSrt(context, note, uiState.subtitleCues)
+                    NoteExporter.shareFile(context, uri, "application/x-subrip", "Share Subtitles (SRT)")
+                    showExportBottomSheet = false
+                },
+                onExportVtt = {
+                    val uri = NoteExporter.exportToVtt(context, note, uiState.subtitleCues)
+                    NoteExporter.shareFile(context, uri, "text/vtt", "Share Subtitles (VTT)")
+                    showExportBottomSheet = false
+                },
+                onShareAudio = {
+                    val uri = NoteExporter.getAudioUri(context, note)
+                    if (uri != null) {
+                        NoteExporter.shareFile(
+                            context,
+                            uri,
+                            NoteExporter.audioMimeType(note),
+                            "Share Audio Recording"
+                        )
+                    } else {
+                        Toast.makeText(context, "Audio file not available", Toast.LENGTH_SHORT).show()
+                    }
+                    showExportBottomSheet = false
+                },
+                onShareText = {
+                    NoteExporter.shareText(context, note)
+                    showExportBottomSheet = false
+                }
+            )
         }
 
         if (showDeleteConfirmation) {
@@ -474,6 +723,58 @@ fun NoteDetailScreen(
                 },
                 containerColor = StitchSurface,
                 shape = RoundedCornerShape(20.dp)
+            )
+        }
+
+        editingCueIndex?.let { cueIndex ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { editingCueIndex = null },
+                title = { Text("Correct caption", color = StitchTextPrimary) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = editingCueText,
+                            onValueChange = { editingCueText = it },
+                            label = { Text("Caption text") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = StitchPurple,
+                                unfocusedBorderColor = StitchCardOutline,
+                                focusedTextColor = StitchTextPrimary,
+                                unfocusedTextColor = StitchTextPrimary
+                            )
+                        )
+                        OutlinedTextField(
+                            value = editingCueSpeaker,
+                            onValueChange = { editingCueSpeaker = it },
+                            label = { Text("Speaker (optional)") },
+                            placeholder = { Text("e.g. Speaker 1 or Alex") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = StitchPurple,
+                                unfocusedBorderColor = StitchCardOutline,
+                                focusedTextColor = StitchTextPrimary,
+                                unfocusedTextColor = StitchTextPrimary
+                            )
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.updateSubtitleCue(cueIndex, editingCueText, editingCueSpeaker)
+                            editingCueIndex = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = StitchPurple)
+                    ) {
+                        Text("Save and refresh analysis", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { editingCueIndex = null }) {
+                        Text("Cancel", color = StitchTextSecondary)
+                    }
+                },
+                containerColor = StitchSurface
             )
         }
     }
@@ -634,41 +935,43 @@ fun StitchExecutiveSummaryCard(
 
             // Body text
             com.example.ui.components.RichMarkdownText(
-                markdown = summary.ifBlank { "Executive summary will be synthesized once recording is processed." },
+                markdown = summary.ifBlank { "No executive summary available." },
                 fontSize = 14.sp,
                 color = StitchTextPrimary,
                 lineHeight = 22.sp
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            if (summary.isNotBlank()) {
+                Spacer(modifier = Modifier.height(14.dp))
 
-            // Sub-tags inside card: "⚡ 98% confidence", "✦ Token Synthesis"
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = StitchSurfaceVariant
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                // Sub-tags inside card: "⚡ 98% confidence", "✦ Token Synthesis"
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = StitchSurfaceVariant
                     ) {
-                        Icon(imageVector = Icons.Default.ElectricBolt, contentDescription = null, tint = StitchCyan, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("98% confidence", fontSize = 11.sp, color = StitchCyanText, fontWeight = FontWeight.Medium)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.ElectricBolt, contentDescription = null, tint = StitchCyan, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("98% confidence", fontSize = 11.sp, color = StitchCyanText, fontWeight = FontWeight.Medium)
+                        }
                     }
-                }
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = StitchSurfaceVariant
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = StitchSurfaceVariant
                     ) {
-                        Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = StitchPurpleText, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Token Synthesis", fontSize = 11.sp, color = StitchPurpleText, fontWeight = FontWeight.Medium)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.AutoAwesome, contentDescription = null, tint = StitchPurpleText, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Token Synthesis", fontSize = 11.sp, color = StitchPurpleText, fontWeight = FontWeight.Medium)
+                        }
                     }
                 }
             }
@@ -731,4 +1034,237 @@ fun StitchKeyTakeawaysCard(takeaways: List<String>) {
     }
 }
 
+@Composable
+fun ExportNoteCard(onOpenExport: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenExport),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = StitchSurface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, StitchCyan.copy(alpha = 0.4f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(StitchCyanContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.IosShare,
+                        contentDescription = null,
+                        tint = StitchCyan,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = "Export & Share Note",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = StitchTextPrimary
+                    )
+                    Text(
+                        text = "Export to PDF, Markdown, Text, or Audio",
+                        fontSize = 12.sp,
+                        color = StitchTextSecondary
+                    )
+                }
+            }
 
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = StitchCyanContainer
+            ) {
+                Text(
+                    text = "Export",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    fontSize = 12.sp,
+                    color = StitchCyan,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ExportBottomSheet(
+    note: Note,
+    subtitleCues: List<SubtitleCue>,
+    onDismiss: () -> Unit,
+    onExportPdf: () -> Unit,
+    onExportMarkdown: () -> Unit,
+    onExportTxt: () -> Unit,
+    onExportSrt: () -> Unit,
+    onExportVtt: () -> Unit,
+    onShareAudio: () -> Unit,
+    onShareText: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = StitchSurface,
+        scrimColor = Color.Black.copy(alpha = 0.6f)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 32.dp, top = 8.dp)
+        ) {
+            Text(
+                text = "Export & Share Note",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = StitchTextPrimary
+            )
+            Text(
+                text = "Select a format to share or save to your device",
+                fontSize = 12.sp,
+                color = StitchTextSecondary
+            )
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            ExportOptionRow(
+                icon = Icons.Default.PictureAsPdf,
+                iconTint = StitchRed,
+                title = "Export as Formatted PDF Document",
+                subtitle = "Clean layout with summary, takeaways & transcript",
+                onClick = onExportPdf
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionRow(
+                icon = Icons.AutoMirrored.Filled.Article,
+                iconTint = StitchPurpleText,
+                title = "Export as Markdown (.md)",
+                subtitle = "Formatted with headers & checkable action items",
+                onClick = onExportMarkdown
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionRow(
+                icon = Icons.Default.Description,
+                iconTint = StitchCyan,
+                title = "Export as Plain Text (.txt)",
+                subtitle = "Universal plain text file compatible everywhere",
+                onClick = onExportTxt
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionRow(
+                icon = Icons.Default.Description,
+                iconTint = StitchCyan,
+                title = "Export subtitles (.srt)",
+                subtitle = if (subtitleCues.isEmpty()) "No timed captions available" else "${subtitleCues.size} audio caption segments",
+                enabled = subtitleCues.isNotEmpty(),
+                onClick = onExportSrt
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionRow(
+                icon = Icons.Default.Description,
+                iconTint = StitchPurpleText,
+                title = "Export subtitles (.vtt)",
+                subtitle = if (subtitleCues.isEmpty()) "No timed captions available" else "${subtitleCues.size} audio caption segments",
+                enabled = subtitleCues.isNotEmpty(),
+                onClick = onExportVtt
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionRow(
+                icon = Icons.Default.AudioFile,
+                iconTint = StitchPurple,
+                title = "Share Audio Recording (.m4a)",
+                subtitle = if (note.audioFilePath.isNotBlank()) "Send the raw voice audio file" else "Audio recording unavailable",
+                enabled = note.audioFilePath.isNotBlank(),
+                onClick = onShareAudio
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ExportOptionRow(
+                icon = Icons.Default.Share,
+                iconTint = StitchTextPrimary,
+                title = "Quick Share Text",
+                subtitle = "Copy or send summary & transcript via chat apps",
+                onClick = onShareText
+            )
+        }
+    }
+}
+
+@Composable
+fun ExportOptionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconTint: Color,
+    title: String,
+    subtitle: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(enabled = enabled, onClick = onClick),
+        color = StitchSurfaceVariant,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(iconTint.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = if (enabled) iconTint else StitchTextMuted,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (enabled) StitchTextPrimary else StitchTextMuted
+                )
+                Text(
+                    text = subtitle,
+                    fontSize = 11.sp,
+                    color = StitchTextMuted
+                )
+            }
+        }
+    }
+}

@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChatMessageDao {
-    @Query("SELECT * FROM chat_messages WHERE noteId = :noteId ORDER BY timestamp ASC")
+    @Query("SELECT * FROM chat_messages WHERE noteId = :noteId ORDER BY timestamp ASC, id ASC")
     fun getMessagesForNote(noteId: String): Flow<List<ChatMessageEntity>>
 
     @Insert

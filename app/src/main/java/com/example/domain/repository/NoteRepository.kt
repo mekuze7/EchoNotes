@@ -14,7 +14,9 @@ interface NoteRepository {
     fun getNotesByCategory(category: String): Flow<List<Note>>
     suspend fun saveNote(note: Note): Note
     suspend fun updateNote(note: Note)
+    suspend fun clearSubtitleCues(noteId: String)
     suspend fun updateActionItem(noteId: String, actionItemId: String, isCompleted: Boolean)
+    suspend fun updateActionItemDueDate(noteId: String, actionItemId: String, dueDate: String?)
     suspend fun deleteNote(id: String) // Moves note to trash
 
     // Trash operations

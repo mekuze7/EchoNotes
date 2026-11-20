@@ -2,6 +2,7 @@ package com.example.ui.recorder
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,16 +33,15 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -125,9 +125,12 @@ fun RecorderScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         hasMicPermission = isGranted
-        if (isGranted) {
-            viewModel.startRecording()
-        }
+    }
+
+    val audioUploadLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let(viewModel::uploadAndTranscribe)
     }
 
     LaunchedEffect(uiState.completedNoteId) {
@@ -143,7 +146,10 @@ fun RecorderScreen(
             if (uiState.completedNoteId == null) {
                 GlobalAudioPlayer.stopAndRelease()
             }
-            if (uiState.state == RecordingState.RECORDING || uiState.state == RecordingState.PAUSED) {
+            if (uiState.state == RecordingState.CONNECTING ||
+                uiState.state == RecordingState.RECORDING ||
+                uiState.state == RecordingState.PAUSED
+            ) {
                 viewModel.cancelRecording()
             }
         }
@@ -153,15 +159,6 @@ fun RecorderScreen(
         GlobalAudioPlayer.stopAndRelease()
         viewModel.cancelRecording()
         onNavigateBack()
-    }
-
-    LaunchedEffect(Unit) {
-        GlobalAudioPlayer.stopAndRelease()
-        if (!hasMicPermission) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        } else if (uiState.state == RecordingState.IDLE) {
-            viewModel.startRecording()
-        }
     }
 
     Box(
@@ -246,6 +243,21 @@ fun RecorderScreen(
                 }
             }
 
+            if (uiState.state == RecordingState.IDLE) {
+                Button(
+                    onClick = { audioUploadLauncher.launch(arrayOf("audio/*", "video/*")) },
+                    colors = ButtonDefaults.buttonColors(containerColor = StitchSurfaceVariant)
+                ) {
+                    Text("Upload audio to transcribe & translate", color = StitchTextPrimary)
+                }
+                Text(
+                    text = "Large files supported up to 2 GB",
+                    fontSize = 10.sp,
+                    color = StitchTextMuted
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             if (!hasMicPermission && uiState.state == RecordingState.IDLE) {
                 Spacer(modifier = Modifier.height(40.dp))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -256,14 +268,6 @@ fun RecorderScreen(
                         Text("Grant Microphone Access")
                     }
                     Spacer(modifier = Modifier.height(10.dp))
-                    TextButton(
-                        onClick = {
-                            hasMicPermission = true
-                            viewModel.startRecording()
-                        }
-                    ) {
-                        Text("Continue Recording", color = StitchCyan)
-                    }
                 }
             } else {
                 Spacer(modifier = Modifier.height(10.dp))
@@ -284,7 +288,7 @@ fun RecorderScreen(
                         color = if (isLive) StitchPurple else Color.Transparent,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable {
+                            .clickable(enabled = uiState.state == RecordingState.IDLE) {
                                 viewModel.setTranscriptionMode(TranscriptionMode.LIVE_STREAMING)
                             }
                     ) {
@@ -293,7 +297,7 @@ fun RecorderScreen(
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = "⚡ Live Stream",
+                                text = "⚡ Live Captions",
                                 fontSize = 11.sp,
                                 fontWeight = if (isLive) FontWeight.Bold else FontWeight.Medium,
                                 color = if (isLive) Color.White else StitchTextSecondary
@@ -306,7 +310,7 @@ fun RecorderScreen(
                         color = if (!isLive) StitchCyanContainer else Color.Transparent,
                         modifier = Modifier
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable {
+                            .clickable(enabled = uiState.state == RecordingState.IDLE) {
                                 viewModel.setTranscriptionMode(TranscriptionMode.ACCURATE_STT)
                             }
                     ) {
@@ -325,6 +329,86 @@ fun RecorderScreen(
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
+
+                if (uiState.transcriptionMode == TranscriptionMode.LIVE_STREAMING) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val engineName = when (uiState.liveCaptionProvider) {
+                            "deepgram" -> "Deepgram"
+                            "android" -> "Android"
+                            else -> "Gemini"
+                        }
+                        Text("$engineName · Language:", fontSize = 11.sp, color = StitchTextMuted)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        listOf("auto" to "Auto", "en" to "English", "am" to "Amharic").forEach { (code, label) ->
+                            val selected = uiState.subtitleLanguage == code
+                            Text(
+                                text = label,
+                                modifier = Modifier
+                                    .padding(horizontal = 2.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (selected) StitchPurpleContainer else StitchSurface)
+                                    .clickable { viewModel.setSubtitleLanguage(code) }
+                                    .padding(horizontal = 7.dp, vertical = 5.dp),
+                                fontSize = 10.sp,
+                                color = if (selected) StitchPurpleText else StitchTextSecondary,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Translate with Gemini:",
+                            fontSize = 11.sp,
+                            color = StitchTextMuted,
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                        listOf("en" to "English", "am" to "Amharic").forEach { (code, label) ->
+                            val selected = uiState.translationEnabled && uiState.translationLanguage == code
+                            Text(
+                                text = if (selected) "✓ $label" else label,
+                                modifier = Modifier
+                                    .padding(horizontal = 3.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (selected) StitchCyanContainer else StitchSurface)
+                                    .clickable {
+                                        viewModel.setLiveTranslation(
+                                            enabled = !selected,
+                                            targetLanguage = code
+                                        )
+                                    }
+                                    .padding(horizontal = 9.dp, vertical = 5.dp),
+                                fontSize = 10.sp,
+                                color = if (selected) StitchCyan else StitchTextSecondary,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                        if (uiState.translationEnabled) {
+                            Text(
+                                text = "Off",
+                                modifier = Modifier
+                                    .padding(horizontal = 3.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(StitchSurface)
+                                    .clickable {
+                                        viewModel.setLiveTranslation(false, uiState.translationLanguage)
+                                    }
+                                    .padding(horizontal = 9.dp, vertical = 5.dp),
+                                fontSize = 10.sp,
+                                color = StitchTextSecondary
+                            )
+                        }
+                    }
+                }
 
                 // Category selector pills
                 val categories = listOf("Meetings", "Ideas", "Tasks", "Personal")
@@ -369,18 +453,24 @@ fun RecorderScreen(
                     }
                 }
 
+                if (uiState.transcriptionMode == TranscriptionMode.LIVE_STREAMING) {
+                    Text(
+                        text = "Voice commands: \"tag this as Ideas\" • \"remind me tomorrow at 9\"",
+                        modifier = Modifier.padding(top = 4.dp),
+                        fontSize = 11.sp,
+                        color = StitchTextMuted
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Giant Timer matching screen 3.png: "00:04.82" (white and cyan)
+                // The recording duration is tracked in whole seconds.
                 val minutes = uiState.durationSeconds / 60
                 val seconds = uiState.durationSeconds % 60
                 Text(
                     text = buildAnnotatedString {
                         withStyle(SpanStyle(color = StitchTextPrimary)) {
                             append(String.format("%02d:%02d", minutes, seconds))
-                        }
-                        withStyle(SpanStyle(color = StitchCyan, fontSize = 28.sp)) {
-                            append(".82")
                         }
                     },
                     fontSize = 52.sp,
@@ -409,10 +499,15 @@ fun RecorderScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (uiState.transcriptionMode == TranscriptionMode.LIVE_STREAMING) {
-                                "RECORDING & TRANSCRIBING"
-                            } else {
-                                "RECORDING HIGH-FIDELITY AUDIO"
+                            text = when {
+                                uiState.state == RecordingState.IDLE -> "READY TO RECORD"
+                                uiState.state == RecordingState.CONNECTING -> "CONNECTING TO CAPTIONS"
+                                uiState.state == RecordingState.RECORDING &&
+                                    uiState.transcriptionMode == TranscriptionMode.LIVE_STREAMING ->
+                                    "RECORDING & TRANSCRIBING"
+                                uiState.state == RecordingState.RECORDING -> "RECORDING HIGH-FIDELITY AUDIO"
+                                uiState.state == RecordingState.PAUSED -> "RECORDING PAUSED"
+                                else -> "SAVING RECORDING"
                             },
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -422,26 +517,54 @@ fun RecorderScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                // Dynamic Stitch Neon Waveform with dB indicators
-                StitchWaveformCanvas(
-                    amplitudes = uiState.amplitudes,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(68.dp)
-                )
-
-                // dB Labels Row below Waveform
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                // Remote Voice Boost & Noise Filter Active Badge
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = StitchCyanContainer
                 ) {
-                    Text("-48 dB", fontSize = 11.sp, color = StitchTextMuted)
-                    Text("PEAK: -6.2 dB", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = StitchCyan)
-                    Text("0 dB", fontSize = 11.sp, color = StitchTextMuted)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.GraphicEq,
+                            contentDescription = null,
+                            tint = StitchCyan,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Remote Voice Gain & Noise Filter Active",
+                            fontSize = 10.sp,
+                            color = StitchCyan,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (uiState.transcriptionMode == TranscriptionMode.ACCURATE_STT) {
+                    // Keep the waveform in accurate-recording mode; live mode uses this space for captions.
+                    StitchWaveformCanvas(
+                        amplitudes = uiState.amplitudes,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(68.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("-48 dB", fontSize = 11.sp, color = StitchTextMuted)
+                        Text("PEAK: -6.2 dB", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = StitchCyan)
+                        Text("0 dB", fontSize = 11.sp, color = StitchTextMuted)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -485,7 +608,7 @@ fun RecorderScreen(
                                     }
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = "Live Speech Stream",
+                                        text = "Live Subtitles",
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = StitchTextPrimary
@@ -508,81 +631,135 @@ fun RecorderScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
-                            Text(
-                                text = "SPEAKER 1 (YOU)  00:01",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = StitchTextMuted,
-                                letterSpacing = 1.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(4.dp))
-
-                            val scrollState = rememberScrollState()
-                            LaunchedEffect(uiState.liveTranscript, uiState.partialTranscript) {
-                                scrollState.animateScrollTo(scrollState.maxValue)
-                            }
-
-                            Box(
+                            Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(StitchSurfaceVariant.copy(alpha = 0.6f))
-                                    .padding(12.dp)
-                                    .verticalScroll(scrollState)
+                                    .weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                color = StitchPurpleContainer,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    StitchPurple.copy(alpha = 0.4f)
+                                )
                             ) {
-                                Column {
-                                    if (uiState.liveTranscript.isNotBlank()) {
-                                        Text(
-                                            text = uiState.liveTranscript,
-                                            fontSize = 14.sp,
-                                            color = StitchTextPrimary,
-                                            lineHeight = 20.sp
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                    }
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                ) {
+                                    Text(
+                                        text = "LIVE CAPTION",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = StitchCyan,
+                                        letterSpacing = 0.8.sp
+                                    )
+                                    Text(
+                                        text = when {
+                                            uiState.statusMessage.startsWith("Detecting spoken language") ->
+                                                "Detecting language: English uses Deepgram; Amharic uses Gemini"
+                                            uiState.statusMessage.startsWith("Using the on-device") ->
+                                                "Real-time Android speech recognition"
+                                            uiState.liveCaptionProvider == "deepgram" ->
+                                                "Streaming live with Deepgram"
+                                            uiState.liveCaptionProvider == "android" ->
+                                                "Listening with Android on-device speech recognition"
+                                            else -> "Gemini transcribes short audio segments"
+                                        },
+                                        fontSize = 10.sp,
+                                        color = StitchTextMuted
+                                    )
+                                    val hasCaptionText = uiState.liveTranscript.isNotBlank() ||
+                                        uiState.partialTranscript.isNotBlank()
+                                    val recentTranscript = uiState.liveTranscript
+                                        .takeLast(180)
+                                        .let { recent ->
+                                            if (recent.length < uiState.liveTranscript.length) {
+                                                recent.substringAfter(' ', recent)
+                                            } else {
+                                                recent
+                                            }
+                                        }
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxWidth()
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            val visibleCaption = uiState.partialTranscript.ifBlank { recentTranscript }
+                                            if (visibleCaption.isNotBlank()) {
+                                                Text(
+                                                    text = visibleCaption,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    fontSize = 19.sp,
+                                                    color = if (uiState.partialTranscript.isNotBlank()) StitchCyan else StitchTextPrimary,
+                                                    fontWeight = FontWeight.Medium,
+                                                    lineHeight = 26.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    maxLines = 4
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = uiState.statusMessage.ifBlank {
+                                                        "Speak to display captions here..."
+                                                    },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    fontSize = 14.sp,
+                                                    color = StitchTextMuted,
+                                                    lineHeight = 20.sp,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
 
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(3.dp)
-                                                .height(18.dp)
-                                                .background(StitchCyan)
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
+                                            val visibleTranslation = uiState.translatedPartialTranscript.ifBlank {
+                                                uiState.translatedTranscript.takeLast(140).trimStart()
+                                            }
+                                            if (visibleTranslation.isNotBlank()) {
+                                                Spacer(modifier = Modifier.height(10.dp))
+                                                Text(
+                                                    text = visibleTranslation,
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    fontSize = 17.sp,
+                                                    color = StitchCyan,
+                                                    fontWeight = FontWeight.Medium,
+                                                    lineHeight = 23.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    maxLines = 3
+                                                )
+                                            } else if (uiState.translationEnabled && hasCaptionText) {
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Text(
+                                                    text = if (uiState.statusMessage.startsWith("Translation failed:")) {
+                                                        uiState.statusMessage
+                                                    } else {
+                                                        "Translating to ${uiState.translationLanguage.uppercase()}..."
+                                                    },
+                                                    fontSize = 11.sp,
+                                                    color = StitchTextMuted,
+                                                    textAlign = TextAlign.Center
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (hasCaptionText && uiState.statusMessage.isNotBlank()) {
                                         Text(
-                                            text = if (uiState.partialTranscript.isNotBlank())
-                                                uiState.partialTranscript
-                                            else if (uiState.liveTranscript.isBlank())
-                                                "Listening... Speak naturally into microphone."
-                                            else
-                                                "Listening...",
-                                            fontSize = 13.sp,
-                                            color = if (uiState.partialTranscript.isNotBlank()) StitchCyan else StitchTextMuted,
-                                            fontFamily = FontFamily.Monospace,
-                                            lineHeight = 18.sp
+                                            text = uiState.statusMessage,
+                                            fontSize = 10.sp,
+                                            color = StitchTextMuted,
+                                            maxLines = 1
                                         )
                                     }
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            val wordCount = (uiState.liveTranscript + " " + uiState.partialTranscript)
-                                .split(Regex("\\s+"))
-                                .filter { it.isNotBlank() }
-                                .size
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Only spoken words appear", fontSize = 11.sp, color = StitchTextMuted)
-                                Text("$wordCount Words", fontSize = 11.sp, color = StitchCyan, fontWeight = FontWeight.Bold)
-                            }
                         }
                     }
                 } else {
@@ -705,9 +882,17 @@ fun RecorderScreen(
                                 .clip(CircleShape)
                                 .background(StitchPurple.copy(alpha = 0.2f))
                                 .border(2.dp, StitchPurple, CircleShape)
-                                .clickable {
-                                    if (uiState.state == RecordingState.RECORDING) viewModel.pauseRecording()
-                                    else viewModel.resumeRecording()
+                                .clickable(
+                                    enabled = uiState.state == RecordingState.IDLE ||
+                                        uiState.state == RecordingState.RECORDING ||
+                                        uiState.state == RecordingState.PAUSED
+                                ) {
+                                    when (uiState.state) {
+                                        RecordingState.IDLE -> viewModel.startRecording()
+                                        RecordingState.RECORDING -> viewModel.pauseRecording()
+                                        RecordingState.PAUSED -> viewModel.resumeRecording()
+                                        else -> Unit
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
@@ -719,7 +904,11 @@ fun RecorderScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = if (uiState.state == RecordingState.RECORDING) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    imageVector = when (uiState.state) {
+                                        RecordingState.IDLE -> Icons.Default.Mic
+                                        RecordingState.RECORDING -> Icons.Default.Pause
+                                        else -> Icons.Default.PlayArrow
+                                    },
                                     contentDescription = "Toggle pause",
                                     tint = Color.White,
                                     modifier = Modifier.size(26.dp)
@@ -728,7 +917,13 @@ fun RecorderScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = if (uiState.state == RecordingState.RECORDING) "Pause" else "Resume",
+                            text = when (uiState.state) {
+                                RecordingState.IDLE -> "Start"
+                                RecordingState.CONNECTING -> "Connecting"
+                                RecordingState.RECORDING -> "Pause"
+                                RecordingState.PAUSED -> "Resume"
+                                RecordingState.PROCESSING -> "Saving"
+                            },
                             fontSize = 11.sp,
                             color = StitchTextMuted
                         )
@@ -738,6 +933,8 @@ fun RecorderScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Button(
                             onClick = { viewModel.finishRecording() },
+                            enabled = uiState.state == RecordingState.RECORDING ||
+                                uiState.state == RecordingState.PAUSED,
                             colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
                             contentPadding = PaddingValues(0.dp),
                             modifier = Modifier
@@ -773,6 +970,39 @@ fun RecorderScreen(
                         Text("Save & AI", fontSize = 11.sp, color = StitchTextMuted)
                     }
                 }
+            }
+        }
+
+        uiState.pendingRecording?.let { pending ->
+            if (uiState.state == RecordingState.IDLE) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = {},
+                    title = { Text("Recover interrupted recording?") },
+                    text = {
+                        Text(
+                            text = "EchoNotes found an unfinished ${pending.category.lowercase()} recording. " +
+                                "Recover it and continue transcription, or discard the incomplete audio."
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = viewModel::recoverInterruptedRecording,
+                            enabled = !uiState.statusMessage.startsWith("Recovering"),
+                            colors = ButtonDefaults.buttonColors(containerColor = StitchPurple)
+                        ) {
+                            Text("Recover", color = Color.White)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = viewModel::discardInterruptedRecording,
+                            enabled = !uiState.statusMessage.startsWith("Recovering")
+                        ) {
+                            Text("Discard", color = StitchTextSecondary)
+                        }
+                    },
+                    containerColor = StitchSurface
+                )
             }
         }
 

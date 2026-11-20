@@ -1,5 +1,7 @@
 package com.example.ui.dashboard
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,7 +26,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Key
@@ -34,6 +38,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.Tune
 import com.example.ui.settings.ApiKeySettingsDialog
 import com.example.ui.theme.ThemeManager
@@ -83,6 +88,7 @@ import com.example.ui.theme.StitchPurpleContainer
 import com.example.ui.theme.StitchPurpleGradientEnd
 import com.example.ui.theme.StitchPurpleText
 import com.example.ui.theme.StitchRed
+import com.example.ui.theme.StitchRedContainer
 import com.example.ui.theme.StitchSurface
 import com.example.ui.theme.StitchSurfaceVariant
 import com.example.ui.theme.StitchTextMuted
@@ -97,11 +103,18 @@ fun DashboardScreen(
     viewModel: DashboardViewModel,
     onNavigateToRecord: () -> Unit,
     onNavigateToDetail: (String) -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    onNavigateToTasks: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val audioImportState by viewModel.audioImportState.collectAsState()
     var noteToDelete by remember { mutableStateOf<Note?>(null) }
     var showApiKeyDialog by remember { mutableStateOf(false) }
+    val audioPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri?.let(viewModel::importAudio)
+    }
 
     if (showApiKeyDialog) {
         ApiKeySettingsDialog(
@@ -258,42 +271,170 @@ fun DashboardScreen(
                 }
             }
 
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = StitchSurface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, StitchCardOutline),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp)
+                    .clickable(enabled = !audioImportState.isImporting) {
+                        audioPicker.launch(arrayOf("audio/*"))
+                    }
+                    .testTag("import_audio_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (audioImportState.isImporting) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            color = StitchCyan,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.AudioFile,
+                            contentDescription = null,
+                            tint = StitchCyan,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = if (audioImportState.isImporting) "Importing audio..." else "Import audio file",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = StitchTextPrimary
+                        )
+                        Text(
+                            text = "MP3, M4A/MP4, WAV, AAC, OGG, FLAC, AIFF or WebM · up to 2 GB",
+                            fontSize = 11.sp,
+                            color = StitchTextSecondary
+                        )
+                    }
+                }
+            }
+
+            if (audioImportState.message.isNotBlank()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (audioImportState.isError) StitchRedContainer else StitchCyanContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = audioImportState.message,
+                            modifier = Modifier.weight(1f),
+                            fontSize = 12.sp,
+                            color = if (audioImportState.isError) StitchRed else StitchCyan
+                        )
+                        IconButton(
+                            onClick = viewModel::dismissAudioImportMessage,
+                            enabled = !audioImportState.isImporting
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss import message",
+                                tint = if (audioImportState.isError) StitchRed else StitchCyan,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
             // Background Transcription In-Progress Alert Banner
             val backgroundTasks by com.example.data.speech.BackgroundTranscriptionManager.activeTasks.collectAsState()
-            val activeProcessingTask = backgroundTasks.values.firstOrNull { !it.isComplete }
-            if (activeProcessingTask != null) {
+            val visibleProcessingTask = backgroundTasks.values.firstOrNull { !it.isComplete }
+                ?: backgroundTasks.values.firstOrNull { it.isFailed }
+            if (visibleProcessingTask != null) {
+                val isFailed = visibleProcessingTask.isFailed
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = StitchCyanContainer,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, StitchCyan.copy(alpha = 0.5f)),
+                    color = if (isFailed) StitchRedContainer else StitchCyanContainer,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        (if (isFailed) StitchRed else StitchCyan).copy(alpha = 0.5f)
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 6.dp)
-                        .clickable { onNavigateToDetail(activeProcessingTask.noteId) }
+                        .clickable { onNavigateToDetail(visibleProcessingTask.noteId) }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        androidx.compose.material3.CircularProgressIndicator(
-                            color = StitchCyan,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(16.dp)
-                        )
+                        if (isFailed) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = null,
+                                tint = StitchRed,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        } else {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                color = StitchCyan,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Transcribing in background",
+                                text = when {
+                                    !isFailed -> "Transcribing in background"
+                                    visibleProcessingTask.status.startsWith("Transcription complete; translation failed") ->
+                                        "Transcript ready; translation failed"
+                                    visibleProcessingTask.status.startsWith("Cannot reach Google's transcription") ||
+                                        visibleProcessingTask.status.startsWith("transcription failed", ignoreCase = true) ->
+                                        "Transcription failed"
+                                    else -> "Processing failed"
+                                },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = StitchCyan
+                                color = if (isFailed) StitchRed else StitchCyan
                             )
                             Text(
-                                text = "${activeProcessingTask.noteTitle} • Tap to view audio",
+                                text = if (isFailed) visibleProcessingTask.status
+                                    else "${visibleProcessingTask.noteTitle} • Tap to view audio",
                                 fontSize = 11.sp,
                                 color = StitchTextSecondary,
-                                maxLines = 1
+                                maxLines = 4
                             )
+                        }
+                        if (isFailed) {
+                            TextButton(
+                                onClick = {
+                                    com.example.data.speech.BackgroundTranscriptionManager.retryTask(
+                                        visibleProcessingTask.noteId
+                                    )
+                                }
+                            ) {
+                                Text("Retry", color = StitchCyan, fontSize = 12.sp)
+                            }
+                            IconButton(
+                                onClick = {
+                                    com.example.data.speech.BackgroundTranscriptionManager.dismissTask(
+                                        visibleProcessingTask.noteId
+                                    )
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Dismiss transcription error",
+                                    tint = StitchRed,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -371,6 +512,23 @@ fun DashboardScreen(
                             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
                             fontSize = 13.sp
                         )
+                    }
+                }
+                item {
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = StitchSurface,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, StitchCardOutline),
+                        modifier = Modifier.clickable(onClick = onNavigateToTasks)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.TaskAlt, contentDescription = null, tint = StitchCyan, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Action checklist", color = StitchCyan, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        }
                     }
                 }
             }
@@ -528,7 +686,11 @@ fun StitchNoteCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Body Snippet Text
-            val snippet = if (note.summary.isNotBlank()) note.summary else note.transcript.ifBlank { "Voice note recorded session." }
+            val snippet = when {
+                note.summary.isNotBlank() -> note.summary
+                note.transcript.isNotBlank() -> note.transcript
+                else -> "Audio saved; transcript is processing or unavailable."
+            }
             Text(
                 text = snippet,
                 style = MaterialTheme.typography.bodyMedium,
@@ -597,7 +759,11 @@ fun StitchNoteCard(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "AI Summarized",
+                                text = when {
+                                    note.summary.isNotBlank() -> "AI Summarized"
+                                    note.transcript.isNotBlank() -> "Transcribed"
+                                    else -> "Audio Saved"
+                                },
                                 fontSize = 11.sp,
                                 color = StitchPurpleText,
                                 fontWeight = FontWeight.Medium

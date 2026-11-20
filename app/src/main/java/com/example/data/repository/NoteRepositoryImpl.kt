@@ -33,13 +33,14 @@ class NoteRepositoryImpl(
     data class ActionItemDto(
         val id: String,
         val title: String,
-        val isCompleted: Boolean
+        val isCompleted: Boolean,
+        val dueDate: String? = null
     )
 
     private fun entityToDomain(entity: NoteEntity): Note {
         val actionItems = try {
             actionItemAdapter.fromJson(entity.actionItems)?.map {
-                ActionItem(id = it.id, title = it.title, isCompleted = it.isCompleted)
+                ActionItem(id = it.id, title = it.title, isCompleted = it.isCompleted, dueDate = it.dueDate)
             } ?: emptyList()
         } catch (e: Exception) {
             emptyList()
@@ -70,7 +71,7 @@ class NoteRepositoryImpl(
     }
 
     private fun domainToEntity(domain: Note): NoteEntity {
-        val dtos = domain.actionItems.map { ActionItemDto(it.id, it.title, it.isCompleted) }
+        val dtos = domain.actionItems.map { ActionItemDto(it.id, it.title, it.isCompleted, it.dueDate) }
         val actionItemsJson = actionItemAdapter.toJson(dtos)
         val takeawaysJson = stringListAdapter.toJson(domain.keyTakeaways)
 
@@ -151,6 +152,10 @@ class NoteRepositoryImpl(
         database.noteDao().updateNote(domainToEntity(note))
     }
 
+    override suspend fun clearSubtitleCues(noteId: String) {
+        fileStorageManager.saveSubtitles(noteId, emptyList())
+    }
+
     override suspend fun updateActionItem(noteId: String, actionItemId: String, isCompleted: Boolean) {
         val note = getNoteByIdSync(noteId) ?: return
         val updatedItems = note.actionItems.map {
@@ -158,6 +163,14 @@ class NoteRepositoryImpl(
         }
         val updatedNote = note.copy(actionItems = updatedItems)
         updateNote(updatedNote)
+    }
+
+    override suspend fun updateActionItemDueDate(noteId: String, actionItemId: String, dueDate: String?) {
+        val note = getNoteByIdSync(noteId) ?: return
+        val updatedItems = note.actionItems.map {
+            if (it.id == actionItemId) it.copy(dueDate = dueDate) else it
+        }
+        updateNote(note.copy(actionItems = updatedItems))
     }
 
     override suspend fun deleteNote(id: String) {

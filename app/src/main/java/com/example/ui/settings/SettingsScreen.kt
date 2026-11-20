@@ -361,8 +361,8 @@ fun SettingsScreen(
                             Icon(imageVector = Icons.Default.Key, contentDescription = null, tint = StitchPurpleText)
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
-                                Text("Gemini API Key", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = StitchTextPrimary)
-                                Text(keySourceDescription, fontSize = 12.sp, color = StitchTextSecondary)
+                                Text("AI API Keys", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = StitchTextPrimary)
+                                Text("$keySourceDescription · Live captions", fontSize = 12.sp, color = StitchTextSecondary)
                             }
                         }
                         Icon(

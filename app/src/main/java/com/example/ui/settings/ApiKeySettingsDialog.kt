@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.ai.GeminiAiClient
 import com.example.data.local.preferences.UserPreferencesManager
+import com.example.data.speech.DeepgramLiveTranscriber
 import com.example.ui.theme.StitchCardOutline
 import com.example.ui.theme.StitchCyan
 import com.example.ui.theme.StitchPurple
@@ -77,6 +78,7 @@ import com.example.ui.theme.StitchSurfaceVariant
 import com.example.ui.theme.StitchTextMuted
 import com.example.ui.theme.StitchTextPrimary
 import com.example.ui.theme.StitchTextSecondary
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -90,14 +92,22 @@ fun ApiKeySettingsDialog(
     val geminiClient = remember { GeminiAiClient(context) }
 
     val initialSavedKey = remember { prefsManager.getCustomGeminiApiKey() }
+    val initialSavedDeepgramKey = remember { prefsManager.getCustomDeepgramApiKey() }
     val initialActiveDescription = remember { geminiClient.getActiveKeySourceDescription() }
 
     var apiKeyInput by remember { mutableStateOf(initialSavedKey) }
+    var deepgramApiKeyInput by remember { mutableStateOf(initialSavedDeepgramKey) }
     var isKeyVisible by remember { mutableStateOf(false) }
+    var isDeepgramKeyVisible by remember { mutableStateOf(false) }
+    var selectedLiveCaptionProvider by remember {
+        mutableStateOf(prefsManager.getLiveCaptionProvider())
+    }
 
     var isTestingConnection by remember { mutableStateOf(false) }
     var testResultSuccess by remember { mutableStateOf<Boolean?>(null) }
     var testResultMessage by remember { mutableStateOf<String?>(null) }
+    var isTestingDeepgram by remember { mutableStateOf(false) }
+    var deepgramTestResult by remember { mutableStateOf<String?>(null) }
 
     var activeSourceDesc by remember { mutableStateOf(initialActiveDescription) }
     var activeModelName by remember { mutableStateOf(geminiClient.getActiveModel()) }
@@ -156,7 +166,7 @@ fun ApiKeySettingsDialog(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        text = "Gemini API Configuration",
+                        text = "AI API Configuration",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold,
                             fontSize = 17.sp
@@ -239,7 +249,7 @@ fun ApiKeySettingsDialog(
                         testResultMessage = null
                     },
                     label = { Text("Gemini API Key", fontSize = 12.sp) },
-                    placeholder = { Text("AIzaSy...", fontSize = 12.sp) },
+                    placeholder = { Text("Paste your Gemini API key", fontSize = 12.sp) },
                     singleLine = true,
                     visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
@@ -345,7 +355,7 @@ fun ApiKeySettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    val modelOptions = listOf("Auto", "gemini-1.5-flash", "gemini-2.0-flash")
+                    val modelOptions = listOf("Auto", "gemini-3.6-flash", "gemini-flash-latest")
                     modelOptions.forEach { opt ->
                         val isSelected = (opt == "Auto" && (selectedModelOption == "Auto" || selectedModelOption.isEmpty())) ||
                                 (selectedModelOption.contains(opt, ignoreCase = true) && opt != "Auto")
@@ -460,18 +470,149 @@ fun ApiKeySettingsDialog(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Text(
+                    text = "Live Caption Engine",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = StitchTextPrimary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("gemini" to "Gemini", "deepgram" to "Deepgram").forEach { (value, label) ->
+                        androidx.compose.material3.FilterChip(
+                            selected = selectedLiveCaptionProvider == value,
+                            onClick = { selectedLiveCaptionProvider = value },
+                            label = { Text(label, fontSize = 12.sp) }
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "For personal testing only: this device stores your Deepgram key encrypted with Android Keystore. Do not distribute an app that uses a personal key; use backend-issued temporary tokens for a public release.",
+                    fontSize = 11.sp,
+                    color = StitchTextMuted,
+                    lineHeight = 15.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = deepgramApiKeyInput,
+                    onValueChange = { deepgramApiKeyInput = it },
+                    label = { Text("Deepgram API Key", fontSize = 12.sp) },
+                    placeholder = { Text("Paste your Deepgram API key", fontSize = 12.sp) },
+                    singleLine = true,
+                    visualTransformation = if (isDeepgramKeyVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { isDeepgramKeyVisible = !isDeepgramKeyVisible },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isDeepgramKeyVisible) {
+                                    Icons.Default.VisibilityOff
+                                } else {
+                                    Icons.Default.Visibility
+                                },
+                                contentDescription = if (isDeepgramKeyVisible) "Hide Deepgram key" else "Show Deepgram key",
+                                tint = StitchTextSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = StitchCyan,
+                        unfocusedBorderColor = StitchCardOutline,
+                        focusedTextColor = StitchTextPrimary,
+                        unfocusedTextColor = StitchTextPrimary,
+                        cursorColor = StitchCyan
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("deepgram_api_key_input")
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        val candidate = deepgramApiKeyInput.trim().trim('"', '\'')
+                        if (candidate.isBlank()) {
+                            deepgramTestResult = "Enter a Deepgram API key to test."
+                            return@OutlinedButton
+                        }
+                        isTestingDeepgram = true
+                        deepgramTestResult = null
+                        coroutineScope.launch {
+                            val transcriber = DeepgramLiveTranscriber(
+                                onFinalTranscript = { _, _, _ -> },
+                                onInterimTranscript = {},
+                                onStatus = {}
+                            )
+                            try {
+                                transcriber.connect(candidate, "en")
+                                deepgramTestResult = "Deepgram connection succeeded. The key can start live captions."
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                deepgramTestResult = e.localizedMessage ?: "Deepgram connection test failed."
+                            } finally {
+                                transcriber.cancel()
+                                isTestingDeepgram = false
+                            }
+                        }
+                    },
+                    enabled = !isTestingDeepgram,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isTestingDeepgram) {
+                        CircularProgressIndicator(
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                            color = StitchCyan
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Testing Deepgram connection...", fontSize = 12.sp)
+                    } else {
+                        Text("Test Deepgram Connection", fontSize = 12.sp)
+                    }
+                }
+                deepgramTestResult?.let { result ->
+                    Text(
+                        text = result,
+                        fontSize = 11.sp,
+                        color = if (result.startsWith("Deepgram connection succeeded")) StitchCyan else StitchRed,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
+                    try {
+                        if (deepgramApiKeyInput.isBlank()) {
+                            prefsManager.clearCustomDeepgramApiKey()
+                        } else {
+                            prefsManager.setCustomDeepgramApiKey(deepgramApiKeyInput)
+                        }
+                        prefsManager.setLiveCaptionProvider(selectedLiveCaptionProvider)
+                    } catch (e: Exception) {
+                        testResultSuccess = false
+                        testResultMessage = e.localizedMessage ?: "Could not securely save the Deepgram API key."
+                        return@Button
+                    }
                     val clean = apiKeyInput.trim().trim('"', '\'')
+                    val previousKey = prefsManager.getCustomGeminiApiKey()
+                    val keyChanged = clean != previousKey
                     if (clean.isNotBlank()) {
                         prefsManager.setCustomGeminiApiKey(clean)
                     } else {
                         prefsManager.clearCustomGeminiApiKey()
                     }
-                    if (selectedModelOption != "Auto" && selectedModelOption.isNotBlank()) {
+                    if (!keyChanged && selectedModelOption != "Auto" && selectedModelOption.isNotBlank()) {
                         prefsManager.setActiveGeminiModel(selectedModelOption)
                     }
                     onKeySaved()
@@ -484,7 +625,7 @@ fun ApiKeySettingsDialog(
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.testTag("save_api_key_button")
             ) {
-                Text("Save Key", fontWeight = FontWeight.Bold)
+                Text("Save Settings", fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
